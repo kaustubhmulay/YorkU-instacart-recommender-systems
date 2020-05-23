@@ -1,0 +1,249 @@
+---
+title: "Project 1 CSDA 1040 R-Markdown"
+author: "CSDA1040 Group 2 - Fanny, Deenu, Dave and Kaustubh"
+date: "28/01/2020"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+  word_document: default
+---
+
+Objectives
+
+The objective of this exercise is to build a recommender system for market basket analysis using a Grocery store sales data from Instacart whereas customers purchasing product online (website or using a mobile application) can get recommendation(s) based on the selected product(s) / item(s).
+
+The recommender system will be deployed using the Shiny Application
+
+Data Manipulation Goals
+
+As a basis for our analysis, the team will be using the Apriori pruning principle to determine the frequent itemset to then make our recommendation based on the product selected.
+
+This should be far less resource consuming than other filtering technique and should be fairly simply once we have an item look alike matrix.
+
+Apriori is designed to work with datasets containing transactions details such as a customer's purchase and in this case should work perfectly with our dataset.
+
+Project Plan
+
+    Determine the business objectives and data mining goals
+    Import the necessary libraries
+    Import and explore the data
+    Prepare the data
+    Select and build the modeling technique
+    Evaluate the results
+    Determine next steps
+    Deploy the Shiny application
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#Installing and evoking all the necessary libraries that are going to be used for data analysis as well as for running Apriori principle (ML)
+
+#install.packages("arules", dependencies=TRUE)
+#install.packages("lubridate")
+#install.packages("tidyverse")
+#install.packages('reshape')
+
+library(lubridate)
+library(arules)
+library(dplyr)
+library(tidyverse)
+library(arulesViz)
+library(plotly)
+```
+
+Data Preparation
+
+Describe Data
+
+Our data consist of 6 different datasets that will need to be combined into one dataset that is suitable for applying the Apriori library. However, we would be using only 5 of the datasets.This data has been obtained from Kaggle and can be accessed at the following link:
+
+https://www.kaggle.com/c/instacart-market-basket-analysis/data
+
+Once combined, our dataset consist of over 32 millions rows and 9 columns at a size of 8906.24 MB
+Our data includes, integers and objects without a column with null values
+
+```{r}
+#Reading all the necessary datasets
+orders_df<-read.csv(file.choose(),header = T)
+products_df<-read.csv(file.choose(),header = T)
+departments_df<-read.csv(file.choose(),header = T)
+aisles_df<-read.csv(file.choose(),header = T)
+order_products_train_df<-read.csv(file.choose(),header = T)
+order_products_prior_df<-read.csv(file.choose(),header = T)
+
+#All datasets loaded into memory
+```
+Now, checking the structure of the datasets and summarizing them to find out the details of the datasets we will be working on.
+
+```{r}
+
+#Summarize orders data
+head(orders_df,10)
+str(orders_df)
+glimpse(orders_df)
+summary(orders_df)
+
+
+#Summarize aisles data
+head(aisles_df,10)
+str(aisles_df)
+glimpse(aisles_df)
+summary(aisles_df)
+
+#Summarize departments data
+head(departments_df,10)
+str(departments_df)
+glimpse(departments_df)
+summary(departments_df)
+
+#Summarize products data
+head(products_df,10)
+str(products_df)
+glimpse(products_df)
+summary(products_df)
+```
+After looking at our datasets, we noticed that each set had different dimensions (numbers of rows and columns) but mostly consist of intergers, floats and objects.
+
+We then explore the data by creating some visualization for some quick insights.
+
+```{r}
+
+#Plotting different univariate plots
+
+hist_order_hour_of_day <- plot_ly(x = orders_df$order_hour_of_day, type = "histogram",                                            marker = list(color = "grey",
+                                       line = list(color = "red", width = 2))) %>% layout(title="Distribution of orders according to hours of the day", 
+                                       xaxis=list(title="Hour of the day in 24 HR",                                               yaxis=list(title="Frequency")))
+hist_order_hour_of_day #Plotting histogram
+
+#Before we plot the day of the week, we have to convert the values from numeric to categorical, i.e., 0 to Sunday, 1 to Monday...and so on.
+
+
+hist_dow <- plot_ly(x = orders_df$order_dow, type = "histogram",
+                                       marker = list(color = "black",
+                                       line = list(color = "lightgreen", width = 2)))%>% layout(title="Distribution of orders according to the day of the week", xaxis=list(title="Day of week (0 = Sunday and so on)"))
+hist_dow
+
+```
+We noticed that most orders are received during the regular business hours, altought they start slowly early in the morning and start decreasing slowly after 5pm.
+
+We can also see that Sundays and Mondays received the most orders, close to 600,000 with Thursdays averaging the lowest amount of orders at slightly over 400,000.
+
+Similarly, we will plot the histogram of the duration customers wait before placing an order again.
+
+```{r}
+plot_days_since_prior_order <- plot_ly(x = orders_df$days_since_prior_order,                                        type = "histogram",                                                          marker = list(color = "blue",
+                                       line = list(color = "red", width = 2))) %>% 
+           layout(title="Days between orders placed by the customers",                                xaxis=list(title="Number of days between orders"),
+           yaxis=list(title="Frequency"))
+plot_days_since_prior_order
+
+```
+
+We can see that most customers order again within a week or wait till the month is over to order the whole month's grocery.
+
+
+In order to start merging our data, we start with the order_products_prior dataset and merge it to the product_df dataset using the "product_id" column as the common field.
+
+```{r}
+
+master_products_df <- merge(x = order_products_prior_df,y = products_df,by="product_id", no.dups= TRUE, incomparables = NULL, all.x = TRUE) ##Left join of Order_products_prior dataset with products_df dataset
+
+head(master_products_df, 10)
+
+```
+
+We further merge our newly created "master_products_df" dataset to merge the aisles_df dataset using the "aisle_id" column as the common field.
+
+```{r}
+master_products_df <- merge(x = master_products_df,y = aisles_df,by="aisle_id", no.dups= TRUE, incomparables = NULL, all.x = TRUE)
+
+```
+
+
+Finally we merge the updated "master_products_df" dataset to the last dataset "departments_df" using the "department_id" column as common field.
+
+```{r}
+master_products_df <- merge(x = master_products_df,y = departments_df,by="department_id", no.dups= TRUE, incomparables = NULL, all.x = TRUE)
+
+head(master_products_df, 10)
+```
+We would need only the product_id, order_id and the product_name columns. Therefore, creating new Dataframe with just the three column.
+
+```{r}
+product_order_name_df <- master_products_df[c("product_id","order_id","product_name")] 
+
+summary(product_order_name_df)
+```
+
+Data contains no missing values, so no need for cleaning there.
+
+```{r}
+count_product_name<-table(product_order_name_df$product_name) #This shows how many times a particular product appears in the data set
+
+plot(count_product_name)
+
+count_product_order_id <-table(product_order_name_df$order_id) #This shows how many items each order has
+
+plot(count_product_order_id)
+
+#Creating DF with just the order ID and Name because we do not need the other columns for Apriori
+
+order_name_df <-master_products_df[c("order_id","product_name")]
+
+#The next step is to convert the dataframe into basket format, based on the Order_ID. New Dataframe df_itemList created below.The ddply() function checks the names of the products and pivots them into one single line separating them by commas.
+
+#Running the below code to remove the package dplyr and then evoking library plyr because otherwise it can cause issues.
+
+if(sessionInfo()['basePkgs']=="dplyr" | sessionInfo()['otherPkgs']=="dplyr"){
+  detach(package:dplyr, unload=TRUE)
+}
+
+library(plyr)
+
+df_itemList <- ddply(order_name_df,c("order_id"), 
+                      function(order_name_df)paste(order_name_df$product_name, 
+                       collapse = ","))
+
+#Writing the newly created Dataframe to a CSV file named ItemList.csv
+write.csv(df_itemList,"ItemList.csv", quote = FALSE, row.names = FALSE)
+
+#Finding the association rules now
+#To read the the CSV file and convert it to a format of transactions, the read.transactions() function is used below. This function can be accessed through the arules library evoked earlier.
+
+#Credit for this code: https://datascienceplus.com/implementing-apriori-algorithm-in-r/
+
+txn = read.transactions(file="ItemList.csv", rm.duplicates= TRUE, format="basket",sep=",",cols=1)
+
+#After running the above command, quotes are introduced in the transactions, which can cause problems and should be removed. Removing the codes below.
+
+txn@itemInfo$labels <- gsub("\"","",txn@itemInfo$labels)
+
+#Finally running the Apriori algorithm on the txn dataframe by specifying the minimum support and confidence:
+
+basket_rules <- apriori(txn,parameter = list(sup = 0.001, conf = 0.5,target="rules"));
+
+#if(sessionInfo()['basePkgs']=="tm" | sessionInfo()['otherPkgs']=="tm"){detach(package:tm, unload=TRUE)}
+
+#Now we will print the association rules. To print them, the inspect() function would be used. This function can be evoked through the arules library.
+
+inspect(basket_rules)
+
+#Now, ploting the vizualiztions. These functions can be accessed form the arulesViz library. 
+
+plot(basket_rules) #Simple plot of the Association rules
+plot(basket_rules, method = "grouped", control = list(k = 5)) 
+plot(basket_rules, method="graph", control=list(type="items"))
+plot(basket_rules, method="paracoord",  control=list(alpha=.5, reorder=TRUE))
+plot(basket_rules,measure=c("support","lift"),shading="confidence",interactive=T)
+itemFrequencyPlot(txn, topN = 5)
+
+##End
+
+```
+
+
+
+```
+
